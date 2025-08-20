@@ -1,38 +1,98 @@
 "use client";
-import React, { useState } from 'react';
-import { Loader2, Send } from 'lucide-react';
+import React, { useState } from "react";
+import { Send } from "lucide-react";
+import { ChatMessage } from "./types";
 
 interface ChatInputProps {
-  disabled: boolean;
-  onSend: (text: string) => void;
+  setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
 }
 
-export const ChatInput: React.FC<ChatInputProps> = ({ disabled, onSend }) => {
-  const [value, setValue] = useState('');
-  const send = () => {
-    const v = value.trim();
-    if (!v) return;
-    onSend(v);
-    setValue('');
+const ChatInput: React.FC<ChatInputProps> = ({ setMessages }) => {
+  const [query, setQuery] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const handleQuery = async () => {
+    if (!query.trim()) return;
+
+    const userMessage: ChatMessage = { type: "user", content: query };
+    setMessages((prev) => [...prev, userMessage]);
+    const currentQuery = query;
+    setQuery("");
+    setLoading(true);
+
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: currentQuery }),
+      });
+
+      if (!response.body) throw new Error("No response body");
+
+      // placeholder AI message
+      const aiMessageIndex = userMessage ? (prev: ChatMessage[]) => prev.length : 0;
+      setMessages((prev) => [...prev, { type: "ai", content: "" }]);
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let accumulatedContent = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value);
+        const lines = chunk.split("\n");
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.text) {
+                accumulatedContent += data.text;
+                setMessages((prev) => {
+                  const newMessages = [...prev];
+                  newMessages[newMessages.length - 1] = { type: "ai", content: accumulatedContent };
+                  return newMessages;
+                });
+              }
+            } catch {}
+          }
+        }
+      }
+    } catch (err) {
+      setMessages((prev) => [
+        ...prev.slice(0, -1),
+        { type: "ai", content: `Error: ${err instanceof Error ? err.message : "Unknown error"}` },
+      ]);
+    } finally {
+      setLoading(false);
+    }
   };
+
+  const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleQuery();
+    }
+  };
+
   return (
-    <div className="p-4 md:p-6 border-t border-gray-200">
-      <div className="flex gap-2 md:gap-3">
+    <div className="bg-gray-900 border-t border-gray-800 p-4">
+      <div className="max-w-3xl mx-auto relative">
         <input
           type="text"
-          value={value}
-          onChange={e => setValue(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && send()}
-          placeholder="Ask a question about your documents..."
-          className="flex-1 px-3 md:px-4 py-2 md:py-3 text-sm md:text-base border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          disabled={disabled}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyPress={handleKeyPress}
+          placeholder="Ask something..."
+          className="w-full pr-12 pl-4 py-3 rounded-xl bg-gray-800 border border-gray-700 focus:ring-2 focus:ring-blue-500 focus:outline-none text-gray-200 placeholder-gray-500"
         />
         <button
-          onClick={send}
-          disabled={!value.trim() || disabled}
-          className="px-4 md:px-6 py-2 md:py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
+          onClick={handleQuery}
+          disabled={loading || !query.trim()}
+          className="absolute right-2 top-1/2 -translate-y-1/2 bg-blue-600 hover:bg-blue-700 p-2 rounded-lg transition disabled:bg-gray-600"
         >
-          {disabled ? <Loader2 className="animate-spin" size={18} /> : <Send size={18} />}
+          <Send className="w-4 h-4 text-white" />
         </button>
       </div>
     </div>
