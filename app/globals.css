@@ -19,6 +19,34 @@
   }
 }
 
+@media (max-width: 768px) {
+  .mobile-stack {
+    flex-direction: column;
+  }
+  
+  .sidebar-mobile {
+    width: 100%;
+    height: auto;
+    max-height: 40vh;
+  }
+  
+  .chat-mobile {
+    height: 60vh;
+  }
+}
+
+/* Print styles */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  
+  .print-friendly {
+    background: white !important;
+    color: black !important;
+  }
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
