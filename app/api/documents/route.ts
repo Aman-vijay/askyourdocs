@@ -8,6 +8,7 @@ import { RecursiveCharacterTextSplitter } from 'langchain/text_splitter';
 import { writeFile, unlink } from 'fs/promises';
 import { join } from 'path';
 import { v4 as uuidv4 } from 'uuid';
+import { createHash } from 'crypto';
 
 export async function POST(request: NextRequest) {
   try {
@@ -73,24 +74,33 @@ export async function POST(request: NextRequest) {
     await ensureCollection(collection, vectorSize);
 
     // Generate embeddings and store in vector database
-  interface Point { id: string; vector: number[]; payload: { content: string; metadata: Record<string, unknown> } & Record<string, unknown> }
+  const EMBEDDINGS_ONLY = process.env.EMBEDDINGS_ONLY === 'true';
+  interface Point { id: string; vector: number[]; payload: { metadata: Record<string, unknown> } & Record<string, unknown> }
   const points: Point[] = [];
     
     for (let i = 0; i < splitDocs.length; i++) {
       const doc = splitDocs[i];
       const embedding = await embeddings.embedQuery(doc.pageContent);
       
+      const baseMetadata: Record<string, unknown> = {
+        ...doc.metadata,
+        sessionId,
+        chunkIndex: i,
+        totalChunks: splitDocs.length
+      };
+      if (EMBEDDINGS_ONLY) {
+        const hash = createHash('sha256').update(doc.pageContent).digest('hex');
+        baseMetadata.contentHash = hash;
+        baseMetadata.contentLength = doc.pageContent.length;
+      } else {
+        // When not in embeddings-only mode we still store a truncated snippet for limited context
+        baseMetadata.snippet = doc.pageContent.substring(0, 200);
+      }
       points.push({
         id: uuidv4(),
         vector: embedding,
         payload: {
-          content: doc.pageContent,
-          metadata: {
-            ...doc.metadata,
-            sessionId,
-            chunkIndex: i,
-            totalChunks: splitDocs.length
-          }
+          metadata: baseMetadata,
         }
       });
     }
@@ -107,7 +117,10 @@ export async function POST(request: NextRequest) {
       chunksCreated: splitDocs.length,
       collection,
       sessionId,
-      message: 'Documents successfully processed and indexed'
+      mode: EMBEDDINGS_ONLY ? 'embeddings-only' : 'full-snippet',
+      message: EMBEDDINGS_ONLY
+        ? 'Documents processed: embeddings stored without raw content.'
+        : 'Documents successfully processed and indexed'
     });
 
   } catch (error) {
