@@ -5,11 +5,11 @@ import { ChatMessage } from "./types";
 
 interface ChatInputProps {
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
+  setLoading: React.Dispatch<React.SetStateAction<boolean>>; // 👈 new prop
 }
 
-const ChatInput: React.FC<ChatInputProps> = ({ setMessages }) => {
+const ChatInput: React.FC<ChatInputProps> = ({ setMessages, setLoading }) => {
   const [query, setQuery] = useState("");
-  const [loading, setLoading] = useState(false);
 
   const handleQuery = async () => {
     if (!query.trim()) return;
@@ -29,8 +29,6 @@ const ChatInput: React.FC<ChatInputProps> = ({ setMessages }) => {
 
       if (!response.body) throw new Error("No response body");
 
-      // placeholder AI message
-      const aiMessageIndex = userMessage ? (prev: ChatMessage[]) => prev.length : 0;
       setMessages((prev) => [...prev, { type: "ai", content: "" }]);
 
       const reader = response.body.getReader();
@@ -51,7 +49,10 @@ const ChatInput: React.FC<ChatInputProps> = ({ setMessages }) => {
                 accumulatedContent += data.text;
                 setMessages((prev) => {
                   const newMessages = [...prev];
-                  newMessages[newMessages.length - 1] = { type: "ai", content: accumulatedContent };
+                  newMessages[newMessages.length - 1] = {
+                    type: "ai",
+                    content: accumulatedContent,
+                  };
                   return newMessages;
                 });
               }
@@ -62,7 +63,10 @@ const ChatInput: React.FC<ChatInputProps> = ({ setMessages }) => {
     } catch (err) {
       setMessages((prev) => [
         ...prev.slice(0, -1),
-        { type: "ai", content: `Error: ${err instanceof Error ? err.message : "Unknown error"}` },
+        {
+          type: "ai",
+          content: `Error: ${err instanceof Error ? err.message : "Unknown error"}`,
+        },
       ]);
     } finally {
       setLoading(false);
@@ -89,7 +93,7 @@ const ChatInput: React.FC<ChatInputProps> = ({ setMessages }) => {
         />
         <button
           onClick={handleQuery}
-          disabled={loading || !query.trim()}
+          disabled={!query.trim()}
           className="absolute right-2 top-1/2 -translate-y-1/2 bg-blue-600 hover:bg-blue-700 p-2 rounded-lg transition disabled:bg-gray-600"
         >
           <Send className="w-4 h-4 text-white" />
