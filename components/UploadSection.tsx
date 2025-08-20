@@ -3,11 +3,14 @@ import React, { useState, useRef } from "react";
 import { Upload, Globe, MessageSquare, Loader2, Plus, File } from "lucide-react";
 import { UploadType } from "./types";
 
+import { IndexedDocumentMeta } from "./DocumentsCounter";
+
 interface UploadSectionProps {
   setDocumentCount: React.Dispatch<React.SetStateAction<number>>;
+  setDocuments: React.Dispatch<React.SetStateAction<IndexedDocumentMeta[]>>;
 }
 
-const UploadSection: React.FC<UploadSectionProps> = ({ setDocumentCount }) => {
+const UploadSection: React.FC<UploadSectionProps> = ({ setDocumentCount, setDocuments }) => {
   const [uploadType, setUploadType] = useState<UploadType>("file");
   const [textContent, setTextContent] = useState("");
   const [websiteUrl, setWebsiteUrl] = useState("");
@@ -54,6 +57,17 @@ const UploadSection: React.FC<UploadSectionProps> = ({ setDocumentCount }) => {
       if (response.ok) {
         setUploadStatus(`✅ ${result.message}`);
         setDocumentCount((prev) => prev + 1);
+        // Push a new document meta entry (best-effort; backend currently doesn't return ID)
+        setDocuments(prev => [
+          ...prev,
+          {
+            id: Date.now(),
+            name: uploadType === 'file' && selectedFile ? selectedFile.name : uploadType === 'website' ? websiteUrl : 'Text Snippet',
+            type: uploadType,
+            size: uploadType === 'file' && selectedFile ? selectedFile.size : undefined,
+            uploadedAt: new Date().toISOString()
+          }
+        ]);
 
         // Reset fields
         if (uploadType === "text") setTextContent("");
