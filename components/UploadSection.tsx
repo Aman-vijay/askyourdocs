@@ -3,7 +3,7 @@ import React, { useState, useRef } from "react";
 import { Upload, Globe, MessageSquare, Loader2, Plus, File } from "lucide-react";
 import { UploadType } from "./types";
 
-import { IndexedDocumentMeta } from "./DocumentsCounter";
+import { IndexedDocumentMeta } from "./DocumentsInfo";
 
 interface UploadSectionProps {
   setDocumentCount: React.Dispatch<React.SetStateAction<number>>;

@@ -1,7 +1,7 @@
 "use client";
 import React from "react";
 import UploadSection from "./UploadSection";
-import DocumentsCounter, { IndexedDocumentMeta } from "./DocumentsCounter";
+import DocumentInfo,{IndexedDocumentMeta} from "./DocumentsInfo";
 
 interface SidebarProps {
   documentCount: number;
@@ -16,10 +16,13 @@ const Sidebar: React.FC<SidebarProps> = ({ documentCount, setDocumentCount, docu
   const handleDelete = async (id: string | number) => {
     setDeletingIds(prev => [...prev, id]);
     try {
-      // If backend deletion endpoint available, call it here.
-      // await fetch(`/api/documents?documentId=${id}`, { method: 'DELETE' });
-      setDocuments(prev => prev.filter(d => d.id !== id));
-      setDocumentCount(prev => Math.max(0, prev - 1));
+        const response = await fetch(`/api/documents/${id}`, {
+            method: "DELETE",
+        });
+        if (response.ok) {
+          setDocuments(prev => prev.filter(d => d.id !== id));
+          setDocumentCount(prev => Math.max(0, prev - 1));
+        }
     } finally {
       setDeletingIds(prev => prev.filter(x => x !== id));
     }
@@ -37,7 +40,7 @@ const Sidebar: React.FC<SidebarProps> = ({ documentCount, setDocumentCount, docu
       {/* Upload + Docs */}
       <div className="flex-1 overflow-y-auto p-4 space-y-6">
   <UploadSection setDocumentCount={setDocumentCount} setDocuments={setDocuments} />
-  <DocumentsCounter count={documentCount} documents={documents} onDelete={handleDelete} loadingIds={deletingIds} />
+  <DocumentInfo count={documentCount} documents={documents} onDelete={handleDelete} loadingIds={deletingIds} />
       </div>
     </div>
   );

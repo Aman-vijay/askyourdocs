@@ -1,7 +1,7 @@
 "use client";
 import React, { useState, useRef, useEffect } from "react";
 import Sidebar from "@/components/Sidebar";
-import { IndexedDocumentMeta } from "@/components/DocumentsCounter";
+import { IndexedDocumentMeta } from "@/components/DocumentsInfo";
 import ChatHeader from "@/components/ChatHeader";
 import ChatMessages from "@/components/ChatMessage";
 import ChatInput from "@/components/ChatInput";
