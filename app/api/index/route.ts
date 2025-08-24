@@ -3,19 +3,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { loadFile, loadUrl } from "@/lib/langchain/loaders";
 import { chunkDocuments } from "@/lib/text/chunking";
 import { cleanText } from "@/lib/text/cleaning";
-import { embeddings } from "@/lib/langchain/embeddings";
-import { ensureCollection } from "@/lib/qdrant/collections";
-import { qdrant } from "@/lib/qdrant/client";
+import { ingestDocuments } from "@/lib/ingest/ingest";
 import { env } from "@/lib/env";
 import { Document } from "@langchain/core/documents";
 import os from "os";
 import fs from "fs";
 import path from "path";
-import { randomUUID } from "crypto";
 
 export const runtime = 'nodejs';
 
-interface QdrantPoint { id: string | number; vector: number[]; payload: { content: string; metadata: Record<string, unknown> } }
+// Legacy interface removed in favor of centralized ingest utility
 
 export async function POST(req: NextRequest) {
   try {
@@ -69,74 +66,24 @@ export async function POST(req: NextRequest) {
 
     docs = docs.map(doc => ({ ...doc, pageContent: cleanText(doc.pageContent) }));
     let chunkedDocs = await chunkDocuments(docs, 1000, 200);
-    // Drop empty / whitespace-only chunks
     chunkedDocs = chunkedDocs.filter(d => d.pageContent.trim().length > 0);
-    if (chunkedDocs.length === 0) {
-      return NextResponse.json({ error: "All chunks empty after cleaning" }, { status: 400 });
-    }
-  // Validate collection (dimension mismatch will throw with guidance)
-  await ensureCollection(env.QDRANT_COLLECTION_NAME, 1536);
-
-    const points: QdrantPoint[] = [];
-    let firstVectorLength: number | undefined;
-    for (let i = 0; i < chunkedDocs.length; i++) {
-      const doc = chunkedDocs[i];
-      // Safety: guard against extremely long content (shouldn't happen with chunking but just in case)
-      if (doc.pageContent.length > 20_000) {
-        doc.pageContent = doc.pageContent.slice(0, 20_000);
-      }
-      const embedding = await embeddings.embedQuery(doc.pageContent);
-      if (firstVectorLength === undefined) firstVectorLength = embedding.length;
-      points.push({
-        id: randomUUID(),
-        vector: embedding,
-        payload: {
-          content: doc.pageContent,
-          metadata: { ...doc.metadata, chunkIndex: i, totalChunks: chunkedDocs.length }
-        }
-      });
-    }
-    if (firstVectorLength !== 1536) {
-      return NextResponse.json({
-        error: "Embedding dimension mismatch before upsert",
-        got: firstVectorLength,
-        expected: 1536,
-        hint: "Ensure the OpenAI embedding model is text-embedding-3-small or recreate the collection with the correct dimension"
-      }, { status: 400 });
+    if (!chunkedDocs.length) {
+      return NextResponse.json({ error: 'All chunks empty after cleaning' }, { status: 400 });
     }
 
-    try {
-      // Quick sanity log for first vector length
-      if (points.length > 0) {
-        console.log(`Indexing ${points.length} points. Vector length: ${points[0].vector.length}`);
-      }
-      await qdrant.upsert(env.QDRANT_COLLECTION_NAME, { wait: true, points });
-    } catch (e: unknown) {
-      const errObj = e as { response?: { status?: number; data?: unknown }; data?: unknown; status?: number };
-      const qErr = errObj.response?.data || errObj.data || errObj;
-      console.error("Qdrant upsert error detail:", JSON.stringify(qErr, null, 2));
-      const qErrStatus = (typeof qErr === 'object' && qErr !== null && 'status' in qErr) ? (qErr as { status?: number }).status : undefined;
-      if (qErrStatus === 400 || errObj.response?.status === 400) {
-        // Provide extra diagnostics
-        return NextResponse.json({
-          error: "Qdrant upsert failed (400)",
-          detail: qErr,
-          diagnostics: {
-            firstVectorLength: points[0]?.vector?.length,
-            totalPoints: points.length,
-            collection: env.QDRANT_COLLECTION_NAME
-          },
-          hint: "Likely vector dimension mismatch or invalid payload. Delete/recreate the collection if dimensions differ: expected 1536."
-        }, { status: 400 });
-      }
-      throw errObj;
-    }
+    const ingestResult = await ingestDocuments({
+      docs: chunkedDocs,
+      collection: env.QDRANT_COLLECTION_NAME,
+      extraMetadata: { sourceType: type }
+    });
 
     return NextResponse.json({
-      message: "Content indexed successfully",
+      message: 'Content indexed successfully',
       documentsProcessed: docs.length,
-      chunksCreated: chunkedDocs.length,
-      pointsIndexed: points.length
+      chunksCreated: ingestResult.chunksCreated,
+      pointsIndexed: ingestResult.pointsIndexed,
+      mode: ingestResult.mode,
+      collection: ingestResult.collection
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Something went wrong during indexing';
@@ -157,3 +104,4 @@ function getMimeType(filename: string): string {
 }
 
 export const config = { api: { bodyParser: false, sizeLimit: '20mb' } };
+

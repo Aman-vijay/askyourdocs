@@ -1,14 +1,12 @@
 // app/api/documents/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { loadFile, loadUrl } from '@/lib/langchain/loaders';
-import { embeddings } from '@/lib/langchain/embeddings';
-import { ensureCollection } from '@/lib/qdrant/collections';
+import { ingestDocuments } from '@/lib/ingest/ingest';
 import { qdrant } from '@/lib/qdrant/client';
 import { RecursiveCharacterTextSplitter } from 'langchain/text_splitter';
 import { writeFile, unlink } from 'fs/promises';
 import { join } from 'path';
 import { v4 as uuidv4 } from 'uuid';
-import { createHash } from 'crypto';
 
 export async function POST(request: NextRequest) {
   try {
@@ -69,56 +67,22 @@ export async function POST(request: NextRequest) {
 
     const splitDocs = await textSplitter.splitDocuments(documents);
 
-    // Ensure collection exists
-    const vectorSize = 1536; // text-embedding-3-small dimension
-    await ensureCollection(collection, vectorSize);
-
-    // Generate embeddings and store in vector database
-  const EMBEDDINGS_ONLY = process.env.EMBEDDINGS_ONLY === 'true';
-  interface Point { id: string; vector: number[]; payload: { metadata: Record<string, unknown> } & Record<string, unknown> }
-  const points: Point[] = [];
-    
-    for (let i = 0; i < splitDocs.length; i++) {
-      const doc = splitDocs[i];
-      const embedding = await embeddings.embedQuery(doc.pageContent);
-      
-      const baseMetadata: Record<string, unknown> = {
-        ...doc.metadata,
-        sessionId,
-        chunkIndex: i,
-        totalChunks: splitDocs.length
-      };
-      if (EMBEDDINGS_ONLY) {
-        const hash = createHash('sha256').update(doc.pageContent).digest('hex');
-        baseMetadata.contentHash = hash;
-        baseMetadata.contentLength = doc.pageContent.length;
-      } else {
-        // When not in embeddings-only mode we still store a truncated snippet for limited context
-        baseMetadata.snippet = doc.pageContent.substring(0, 200);
-      }
-      points.push({
-        id: uuidv4(),
-        vector: embedding,
-        payload: {
-          metadata: baseMetadata,
-        }
-      });
-    }
-
-    // Upsert points to Qdrant
-    await qdrant.upsert(collection, {
-      wait: true,
-      points: points
+    const ingestResult = await ingestDocuments({
+      // splitDocs already are Document instances from LangChain loaders
+      docs: splitDocs,
+      collection,
+      extraMetadata: { sessionId, sourceType: file ? 'file' : url ? 'website' : 'text' }
     });
 
     return NextResponse.json({
       success: true,
       documentsProcessed: documents.length,
-      chunksCreated: splitDocs.length,
-      collection,
+      chunksCreated: ingestResult.chunksCreated,
+      pointsIndexed: ingestResult.pointsIndexed,
+      collection: ingestResult.collection,
       sessionId,
-      mode: EMBEDDINGS_ONLY ? 'embeddings-only' : 'full-snippet',
-      message: EMBEDDINGS_ONLY
+      mode: ingestResult.mode,
+      message: ingestResult.mode === 'embeddings-only'
         ? 'Documents processed: embeddings stored without raw content.'
         : 'Documents successfully processed and indexed'
     });
@@ -180,51 +144,85 @@ export async function GET(request: NextRequest) {
   }
 }
 
-export async function DELETE(request: NextRequest) {
+// export async function DELETE(request: NextRequest) {
+//   try {
+//     const { searchParams } = new URL(request.url);
+//     const sessionId = searchParams.get('sessionId');
+//     const collection = searchParams.get('collection') || 'default';
+//     const documentId = searchParams.get('documentId');
+
+//     if (!sessionId) {
+//       return NextResponse.json({ error: 'Session ID is required' }, { status: 400 });
+//     }
+
+//     if (documentId) {
+//       // Delete specific document
+//       await qdrant.delete(collection, {
+//         points: [documentId]
+//       });
+
+//       return NextResponse.json({
+//         success: true,
+//         message: `Document ${documentId} deleted`
+//       });
+//     } else {
+//       // Delete all documents for the session
+//       await qdrant.delete(collection, {
+//         filter: {
+//           must: [
+//             {
+//               key: 'metadata.sessionId',
+//               match: { value: sessionId }
+//             }
+//           ]
+//         }
+//       });
+
+//       return NextResponse.json({
+//         success: true,
+//         message: `All documents for session ${sessionId} deleted`
+//       });
+//     }
+
+//   } catch (error) {
+//     console.error('Delete documents API error:', error);
+//     return NextResponse.json(
+//       { error: 'Failed to delete documents' },
+//       { status: 500 }
+//     );
+//   }
+// }
+export async function DELETE(req: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url);
-    const sessionId = searchParams.get('sessionId');
-    const collection = searchParams.get('collection') || 'default';
-    const documentId = searchParams.get('documentId');
+    const url = new URL(req.url);
+    const collection = url.searchParams.get('collection') || 'default';
+    const documentId = url.searchParams.get('id') || url.searchParams.get('documentId');
+    const dropCollection = url.searchParams.get('dropCollection') === 'true';
 
-    if (!sessionId) {
-      return NextResponse.json({ error: 'Session ID is required' }, { status: 400 });
+    if (dropCollection) {
+      try {
+        await qdrant.deleteCollection(collection);
+        return NextResponse.json({ success: true, message: `Collection '${collection}' deleted` });
+      } catch (e) {
+        console.error('❌ Collection delete failed:', e);
+        return NextResponse.json({ error: `Failed to delete collection '${collection}'` }, { status: 500 });
+      }
     }
 
-    if (documentId) {
-      // Delete specific document
-      await qdrant.delete(collection, {
-        points: [documentId]
-      });
-
-      return NextResponse.json({
-        success: true,
-        message: `Document ${documentId} deleted`
-      });
-    } else {
-      // Delete all documents for the session
-      await qdrant.delete(collection, {
-        filter: {
-          must: [
-            {
-              key: 'metadata.sessionId',
-              match: { value: sessionId }
-            }
-          ]
-        }
-      });
-
-      return NextResponse.json({
-        success: true,
-        message: `All documents for session ${sessionId} deleted`
-      });
+    if (!documentId) {
+      return NextResponse.json({ error: 'Provide id or documentId query param, or dropCollection=true to remove entire collection.' }, { status: 400 });
     }
 
-  } catch (error) {
-    console.error('Delete documents API error:', error);
-    return NextResponse.json(
-      { error: 'Failed to delete documents' },
-      { status: 500 }
-    );
+    try {
+      await qdrant.delete(collection, { points: [documentId], wait: true });
+      return NextResponse.json({ success: true, message: `Deleted document '${documentId}'`, id: documentId, collection });
+    } catch (e) {
+      console.error('❌ Document deletion failed:', e);
+      return NextResponse.json({ error: `Failed to delete document '${documentId}'` }, { status: 500 });
+    }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Something went wrong during deletion';
+    console.error('❌ Operation failed:', err);
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
