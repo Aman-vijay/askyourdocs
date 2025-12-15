@@ -5,10 +5,9 @@ import { env } from '@/lib/env';
 export const runtime = 'nodejs';
 
 // DELETE /api/documents/:id?collection=yourCollection
-export async function DELETE(_req: NextRequest, context: { params: Promise<{ id: string }> | { id: string } }) {
-  // Support both synchronous and asynchronous params per Next.js guidance
-  const resolvedParams = await context.params;
-  const id = resolvedParams?.id;
+export async function DELETE(_req: NextRequest, context: { params: Promise<{ id: string }> }) {
+  // Support async params per Next.js guidance
+  const { id } = await context.params;
   if (!id || typeof id !== 'string' || id.trim() === '') {
     return NextResponse.json({ error: 'Document id required in path' }, { status: 400 });
   }
